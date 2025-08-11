@@ -235,7 +235,7 @@ make logs-since VERIFY_SINCE=30                  # show last 30s logs
 make verify-port-logs PORT=5801 VERIFY_SINCE=60  # grep events for a specific port
 ```
 
-### Event-driven alternatives (eBPF)
+### Future Roadmap: Event-driven alternatives (eBPF)
 
 For near-zero-overhead and lossless detection, consider an event-driven approach using eBPF (listening to `bind()`/`listen()`):
 
