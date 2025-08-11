@@ -6,16 +6,16 @@ set -euo pipefail
 # - SCAN_INTERVAL: base sleep interval between bursts (seconds, supports fractional; default 2)
 # - BURST_SCANS: number of rapid scans per cycle to catch short-lived ports (default 1)
 # - BURST_DELAY: delay between scans in a burst (seconds, supports fractional; default 0.05)
-# - VERBOSE_LSOF: if set to 1, dump lsof details for each new port (default 1)
+# - VERBOSE_LSOF: if set to 1, dump lsof details for each new port (default 0)
 #
 scan_interval="${SCAN_INTERVAL:-2}"
 burst_scans="${BURST_SCANS:-1}"
 burst_delay="${BURST_DELAY:-0.05}"
-verbose_lsof="${VERBOSE_LSOF:-1}"
+verbose_lsof="${VERBOSE_LSOF:-0}"
 
-# Prefer /proc parsers for lower overhead and higher sampling rates
+# Prefer ss for sampling by default for broader compatibility and speed
 # 1 = use /proc/net tcp/udp readers, 0 = use ss for each sample
-use_proc_backend="${USE_PROC:-1}"
+use_proc_backend="${USE_PROC:-0}"
 
 # Optional close debounce to reduce flapping; in milliseconds (0 = disabled)
 close_grace_ms="${CLOSE_GRACE_MS:-0}"
@@ -49,9 +49,7 @@ collect_ports_once() {
   else
     # -n: numeric; -l: listening; -t: TCP; -u: UDP; -H: no header
     ss -tulnH 2>/dev/null \
-      | awk '{print $5}' \
-      | sed 's/.*://g' \
-      | grep -E '^[0-9]+$' \
+      | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n}' \
       | sort -u || true
   fi
 }

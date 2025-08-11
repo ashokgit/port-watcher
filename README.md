@@ -88,7 +88,7 @@ make clean
 
 - Image is based on `node:18` and includes `ss`, `lsof`, and related tools.
 - Entrypoint script `listen_ports.sh` runs inside the container and:
-  - Uses a low-overhead `/proc` backend by default to enumerate TCP/UDP sockets, with optional `ss` backend.
+  - Uses the `ss` backend by default to enumerate TCP/UDP sockets, with an optional `/proc` backend.
   - Supports burst scanning: multiple quick scans per cycle to catch short-lived ports between base intervals.
   - Resolves PID(s) primarily via `ss -p` and falls back to `lsof` if needed.
   - Optionally debounces close events via a grace period to reduce flapping.
@@ -111,17 +111,17 @@ make run SCAN_INTERVAL=1
 make run BURST_SCANS=5 BURST_DELAY=0.03
 ```
 
-- Prefer `/proc` backend (default) or `ss` backend:
+- Prefer `ss` backend (default) or `/proc` backend:
 
 ```bash
-make run USE_PROC=1   # default
-make run USE_PROC=0   # use ss for sampling
+make run USE_PROC=0   # default (ss)
+make run USE_PROC=1   # use /proc backend
 ```
 
-- Reduce lsof verbosity (fewer log details):
+- lsof verbosity (default off):
 
 ```bash
-make run VERBOSE_LSOF=0
+make run VERBOSE_LSOF=1   # enable detailed lsof dump on new ports
 ```
 
 - Close-event debounce window (milliseconds):
@@ -234,6 +234,16 @@ Other useful helpers:
 make logs-since VERIFY_SINCE=30                  # show last 30s logs
 make verify-port-logs PORT=5801 VERIFY_SINCE=60  # grep events for a specific port
 ```
+
+### Event-driven alternatives (eBPF)
+
+For near-zero-overhead and lossless detection, consider an event-driven approach using eBPF (listening to `bind()`/`listen()`):
+
+- Tracee: runtime tracing focused on security/forensics.
+- Cilium Tetragon: security observability and runtime enforcement.
+- Falco: CNCF runtime security with an eBPF driver.
+
+These tools emit events as ports are opened/closed instead of polling, and can integrate with alerting/metrics stacks.
 
 ## Limitations
 

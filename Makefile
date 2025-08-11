@@ -7,8 +7,8 @@ PROJECT := portwatcher
 SCAN_INTERVAL ?= 2
 BURST_SCANS ?= 1
 BURST_DELAY ?= 0.05
-VERBOSE_LSOF ?= 1
-USE_PROC ?= 1
+VERBOSE_LSOF ?= 0
+USE_PROC ?= 0
 CLOSE_GRACE_MS ?= 0
 SNAPSHOT_PATH ?= /dev/shm/portwatcher.snapshot
 
@@ -49,9 +49,9 @@ run: build
 	@echo "\nContainer is running. Use 'make logs' to observe new ports."
 
 run-hf: build
-	@echo "Starting high-fidelity mode: SCAN_INTERVAL=0.5 BURST_SCANS=10 BURST_DELAY=0.02 USE_PROC=1 CLOSE_GRACE_MS=200 VERBOSE_LSOF=0"
+	@echo "Starting high-fidelity mode: SCAN_INTERVAL=0.5 BURST_SCANS=10 BURST_DELAY=0.02 USE_PROC=0 CLOSE_GRACE_MS=200 VERBOSE_LSOF=0"
 	SCAN_INTERVAL=0.5 BURST_SCANS=10 BURST_DELAY=0.02 \
-	VERBOSE_LSOF=0 USE_PROC=1 CLOSE_GRACE_MS=200 SNAPSHOT_PATH=$(SNAPSHOT_PATH) \
+	VERBOSE_LSOF=0 USE_PROC=0 CLOSE_GRACE_MS=200 SNAPSHOT_PATH=$(SNAPSHOT_PATH) \
 	docker compose up -d
 	@echo "\nContainer is running in high-fidelity mode. Use 'make logs'."
 
