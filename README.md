@@ -10,6 +10,12 @@ Self-contained Docker environment that runs an idle container and continuously d
 make run
 ```
 
+- Run as a managed background service (Supervisor):
+
+```bash
+make run-sv
+```
+
 - High-fidelity mode (tuned for transient ports, still in-container only):
 
 ```bash
@@ -89,6 +95,8 @@ make clean
   - Persists the most recent port snapshot to `/dev/shm/portwatcher.snapshot` (configurable) for continuity.
 - No Docker API access is required; everything runs in-container, watching only the container itself.
 
+You can run the watcher directly (default `CMD`) or under Supervisor (PID 1 process supervising the watcher and restarting it on failure).
+
 ## Configuration
 
 - Override scan interval:
@@ -127,6 +135,30 @@ make run CLOSE_GRACE_MS=200
 ```bash
 make run SNAPSHOT_PATH=/dev/shm/portwatcher.snapshot
 ```
+
+## Run as a background service with Supervisor
+
+Start the container under Supervisor (manages the watcher process and restarts on failure):
+
+```bash
+make run-sv
+```
+
+Check the service is running:
+
+```bash
+docker exec portwatcher ps aux | grep -E 'supervisord|listen_ports' | cat
+```
+
+View logs (supervisor and watcher logs are forwarded to stdout/stderr):
+
+```bash
+docker logs portwatcher
+```
+
+Notes:
+- The Dockerfile installs `supervisor` and includes a program config to run `/listen_ports.sh`.
+- `make run-sv` starts the same container image but uses Supervisor as entrypoint.
 
 ## Manual test
 

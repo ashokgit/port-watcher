@@ -1,4 +1,4 @@
-.PHONY: help build run run-hf run-ss run-proc stop clean logs logs-since exec shell \
+.PHONY: help build run run-hf run-ss run-proc run-sv stop clean logs logs-since exec shell \
         test-http test-udp test-3000 kill-port \
         test-tcp-transient test-udp-transient test-tcp-burst test-udp-burst \
         verify-port-logs verify-suite
@@ -19,6 +19,7 @@ help:
 	@echo "  run-hf       Start with high-fidelity detection settings"
 	@echo "  run-ss       Start using ss backend (USE_PROC=0)"
 	@echo "  run-proc     Start using /proc backend (USE_PROC=1)"
+	@echo "  run-sv       Start under Supervisor (supervisord)"
 	@echo "  logs         Tail container logs"
 	@echo "  logs-since   Show recent logs (VERIFY_SINCE, default 15s)"
 	@echo "  exec         Exec into the container with bash"
@@ -65,6 +66,17 @@ run-proc: build
 	SCAN_INTERVAL=$(SCAN_INTERVAL) BURST_SCANS=$(BURST_SCANS) BURST_DELAY=$(BURST_DELAY) \
 	VERBOSE_LSOF=$(VERBOSE_LSOF) USE_PROC=1 CLOSE_GRACE_MS=$(CLOSE_GRACE_MS) SNAPSHOT_PATH=$(SNAPSHOT_PATH) \
 	docker compose up -d
+
+# Run under Supervisor by overriding the container command
+run-sv: build
+	@echo "Starting under Supervisor (supervisord)"
+	SCAN_INTERVAL=$(SCAN_INTERVAL) BURST_SCANS=$(BURST_SCANS) BURST_DELAY=$(BURST_DELAY) \
+	VERBOSE_LSOF=$(VERBOSE_LSOF) USE_PROC=$(USE_PROC) CLOSE_GRACE_MS=$(CLOSE_GRACE_MS) SNAPSHOT_PATH=$(SNAPSHOT_PATH) \
+	docker compose up -d --force-recreate --no-deps
+	# Restart container under supervisord entrypoint (publishes service ports)
+	docker stop $(PROJECT) >/dev/null 2>&1 || true
+	docker rm $(PROJECT) >/dev/null 2>&1 || true
+	docker compose run -d --service-ports --name $(PROJECT) --entrypoint /usr/bin/supervisord portwatcher -c /etc/supervisor/conf.d/portwatcher.conf
 
 logs:
 	docker compose logs -f | cat
