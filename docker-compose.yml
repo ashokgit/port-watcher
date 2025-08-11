@@ -5,6 +5,12 @@ services:
     tty: true
     environment:
       - SCAN_INTERVAL=${SCAN_INTERVAL:-2}
+      - BURST_SCANS=${BURST_SCANS:-1}
+      - BURST_DELAY=${BURST_DELAY:-0.05}
+      - VERBOSE_LSOF=${VERBOSE_LSOF:-1}
+      - USE_PROC=${USE_PROC:-1}
+      - CLOSE_GRACE_MS=${CLOSE_GRACE_MS:-0}
+      - SNAPSHOT_PATH=${SNAPSHOT_PATH:-/dev/shm/portwatcher.snapshot}
     ports:
       - "3000:3000"
 

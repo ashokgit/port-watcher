@@ -10,6 +10,12 @@ Self-contained Docker environment that runs an idle container and continuously d
 make run
 ```
 
+- High-fidelity mode (tuned for transient ports, still in-container only):
+
+```bash
+make run-hf
+```
+
 - Watch logs for detected ports:
 
 ```bash
@@ -40,6 +46,20 @@ make test-3000
 make kill-port PORT=5000
 ```
 
+- Test very short-lived sockets (transient):
+
+```bash
+make test-tcp-transient TRANSIENT_PORT=5701 TRANSIENT_MS=120
+make test-udp-transient TRANSIENT_PORT=5702 TRANSIENT_MS=120
+```
+
+- Burst open/close across multiple ports quickly:
+
+```bash
+make test-tcp-burst BURST_COUNT=6 BASE_PORT=5800 HOLD_MS=120 INTERVAL_S=0.03
+make test-udp-burst BURST_COUNT=6 BASE_PORT=5900 HOLD_MS=120 INTERVAL_S=0.03
+```
+
 - Exec into the container shell:
 
 ```bash
@@ -61,10 +81,13 @@ make clean
 ## How it works
 
 - Image is based on `node:18` and includes `ss`, `lsof`, and related tools.
-- Entrypoint script `listen_ports.sh` scans every `SCAN_INTERVAL` seconds (default 2) and logs:
-  - Newly opened ports with timestamps, plus the owning process via `lsof`. It includes PID(s) for the port.
-  - Ports that were present previously but disappeared since the last scan as "Port closed" events, including the last known PID(s).
-- No Docker API access is required.
+- Entrypoint script `listen_ports.sh` runs inside the container and:
+  - Uses a low-overhead `/proc` backend by default to enumerate TCP/UDP sockets, with optional `ss` backend.
+  - Supports burst scanning: multiple quick scans per cycle to catch short-lived ports between base intervals.
+  - Resolves PID(s) primarily via `ss -p` and falls back to `lsof` if needed.
+  - Optionally debounces close events via a grace period to reduce flapping.
+  - Persists the most recent port snapshot to `/dev/shm/portwatcher.snapshot` (configurable) for continuity.
+- No Docker API access is required; everything runs in-container, watching only the container itself.
 
 ## Configuration
 
@@ -72,6 +95,37 @@ make clean
 
 ```bash
 make run SCAN_INTERVAL=1
+```
+
+- Burst scanning (catch short-lived opens between intervals):
+
+```bash
+make run BURST_SCANS=5 BURST_DELAY=0.03
+```
+
+- Prefer `/proc` backend (default) or `ss` backend:
+
+```bash
+make run USE_PROC=1   # default
+make run USE_PROC=0   # use ss for sampling
+```
+
+- Reduce lsof verbosity (fewer log details):
+
+```bash
+make run VERBOSE_LSOF=0
+```
+
+- Close-event debounce window (milliseconds):
+
+```bash
+make run CLOSE_GRACE_MS=200
+```
+
+- Snapshot persistence path (tmpfs recommended):
+
+```bash
+make run SNAPSHOT_PATH=/dev/shm/portwatcher.snapshot
 ```
 
 ## Manual test
@@ -105,11 +159,11 @@ Expected in logs:
 
 ## Verification (example)
 
-End-to-end check with faster scan interval:
+End-to-end check with high-fidelity settings:
 
 ```bash
 docker compose down --volumes --remove-orphans
-make run SCAN_INTERVAL=1
+make run-hf
 make test-http              # TCP 5000
 make test-udp PORT=5361     # UDP 5361
 make test-3000              # TCP 3000 (host 3000:3000)
@@ -134,10 +188,25 @@ And the curl output should be:
 Hello 3000
 ```
 
+## Automated verification suite
+
+Run a sequence of steady-state, transient, and burst tests and show recent logs:
+
+```bash
+make verify-suite
+```
+
+Other useful helpers:
+
+```bash
+make logs-since VERIFY_SINCE=30                  # show last 30s logs
+make verify-port-logs PORT=5801 VERIFY_SINCE=60  # grep events for a specific port
+```
+
 ## Limitations
 
-- Ports that open and close between scans may be missed.
-- Detects in-container listening sockets only.
+- Detects in-container listening sockets only. It does not observe the host or other containers' namespaces.
+- Detection is still sampling-based. With burst scanning and a low-overhead backend, the capture rate for short-lived sockets is high, but an ultra-short listener that opens and closes entirely between all burst samples can still be missed. Lower `BURST_DELAY`, increase `BURST_SCANS`, or reduce `SCAN_INTERVAL` to increase fidelity.
 
 ## Repository layout
 
