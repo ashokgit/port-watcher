@@ -5,7 +5,7 @@ WORKDIR /app
 # Install tools to inspect network ports
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       iproute2 procps lsof net-tools ca-certificates supervisor \
+       iproute2 procps lsof net-tools ca-certificates supervisor curl \
     && rm -rf /var/lib/apt/lists/*
 
 

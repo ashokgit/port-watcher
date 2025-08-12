@@ -11,7 +11,24 @@ services:
       - USE_PROC=${USE_PROC:-0}
       - CLOSE_GRACE_MS=${CLOSE_GRACE_MS:-0}
       - SNAPSHOT_PATH=${SNAPSHOT_PATH:-/dev/shm/portwatcher.snapshot}
+      - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
     ports:
       - "3000:3000"
+
+  listner-api:
+    build:
+      context: ./listner-api
+      dockerfile: Dockerfile
+    container_name: listner-api
+    environment:
+      - LOG_FILE=/logs/portwatcher.log
+      - PORT=8080
+    volumes:
+      - listner_logs:/logs
+    ports:
+      - "8080:8080"
+
+volumes:
+  listner_logs:
 
 

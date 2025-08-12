@@ -12,6 +12,7 @@ scan_interval="${SCAN_INTERVAL:-2}"
 burst_scans="${BURST_SCANS:-1}"
 burst_delay="${BURST_DELAY:-0.05}"
 verbose_lsof="${VERBOSE_LSOF:-0}"
+listener_url="${LISTENER_URL:-}"
 
 # Prefer ss for sampling by default for broader compatibility and speed
 # 1 = use /proc/net tcp/udp readers, 0 = use ss for each sample
@@ -30,6 +31,9 @@ declare -A port_last_seen_ms
 backend_label="ss"
 if [[ "${use_proc_backend}" == "1" ]]; then backend_label="proc"; fi
 echo "[portwatcher] Starting listener. Interval: ${scan_interval}s, burst_scans: ${burst_scans}, burst_delay: ${burst_delay}s, backend: ${backend_label}, close_grace_ms: ${close_grace_ms}"
+if [[ -n "$listener_url" ]]; then
+  echo "[portwatcher] Listener URL configured: $listener_url"
+fi
 
 # Time in milliseconds (best-effort)
 now_ms() {
@@ -129,9 +133,13 @@ while true; do
         pids=$(resolve_pids_for_port "$p")
         port_to_pids["$p"]="${pids}"
         if [[ -n "${pids}" ]]; then
-          echo "[$(date)] New port opened: $p (pids: ${pids})"
+          line="[$(date)] New port opened: $p (pids: ${pids})"
         else
-          echo "[$(date)] New port opened: $p (pids: unknown)"
+          line="[$(date)] New port opened: $p (pids: unknown)"
+        fi
+        echo "$line"
+        if [[ -n "$listener_url" ]]; then
+          curl -sS -m 2 -H 'Content-Type: text/plain' --data "$line" "$listener_url" >/dev/null 2>&1 || true
         fi
         if [[ "${verbose_lsof}" == "1" ]]; then
           lsof -nP -i :"$p" 2>/dev/null || true
@@ -162,9 +170,13 @@ while true; do
         fi
         last_pids="${port_to_pids[$p]:-}"
         if [[ -n "$last_pids" ]]; then
-          echo "[$(date)] Port closed: $p (last pids: ${last_pids})"
+          line="[$(date)] Port closed: $p (last pids: ${last_pids})"
         else
-          echo "[$(date)] Port closed: $p"
+          line="[$(date)] Port closed: $p"
+        fi
+        echo "$line"
+        if [[ -n "$listener_url" ]]; then
+          curl -sS -m 2 -H 'Content-Type: text/plain' --data "$line" "$listener_url" >/dev/null 2>&1 || true
         fi
         unset 'port_to_pids[$p]'
         unset 'port_last_seen_ms[$p]'
