@@ -1,13 +1,16 @@
-FROM aquasec/tracee:latest as tracee_src
-
 FROM alpine:3.20
 
-RUN apk add --no-cache bash jq supervisor zlib libelf ca-certificates
+# Version of Tracee to install (GitHub release tag or "latest")
+ARG TRACEE_VERSION=latest
+
+RUN apk add --no-cache bash jq supervisor zlib libelf ca-certificates curl tar
 
 WORKDIR /app
 
-COPY --from=tracee_src /tracee/tracee /tracee/tracee
-RUN chmod +x /tracee/tracee
+# Install Tracee via the portable installer
+COPY install_tracee.sh /usr/local/bin/install_tracee.sh
+RUN chmod +x /usr/local/bin/install_tracee.sh \
+    && TRACEE_VERSION="$TRACEE_VERSION" /usr/local/bin/install_tracee.sh
 
 COPY tracee_ports.sh /usr/local/bin/tracee_ports.sh
 RUN chmod +x /usr/local/bin/tracee_ports.sh

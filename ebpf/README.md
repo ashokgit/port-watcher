@@ -27,11 +27,37 @@ It can run in two modes:
 ## Files
 
 - `docker-compose.ebpf.yml`: Service definition for the eBPF watcher container.
-- `Dockerfile`: Minimal Alpine image bundling Tracee and supervisor.
+- `Dockerfile`: Minimal Alpine image that installs Tracee via a portable installer and runs under Supervisor.
 - `entrypoint.sh`: Chooses Tracee (eBPF) or the universal fallback.
 - `tracee_ports.sh`: Parses Tracee JSON output and prints open/close events.
 - `universal_portwatcher.sh`: Sampling fallback (uses `ss`/`lsof`).
 - `supervisord.tracee.conf`: Supervisor program config.
+
+### Portable installer
+
+- `install_tracee.sh`: Distro-agnostic installer that fetches a prebuilt Tracee (CO-RE) release and installs minimal runtime dependencies. Works on Debian/Ubuntu, Alpine, RHEL/CentOS/Fedora, and SUSE.
+
+Usage inside any base image:
+
+```Dockerfile
+FROM ubuntu:22.04
+
+# Minimal runtime deps. The script will install what is missing.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY ebpf/install_tracee.sh /usr/local/bin/install_tracee.sh
+RUN chmod +x /usr/local/bin/install_tracee.sh \
+ && TRACEE_VERSION=latest /usr/local/bin/install_tracee.sh
+
+# Optional: use our watcher scripts
+COPY ebpf/tracee_ports.sh /usr/local/bin/tracee_ports.sh
+COPY ebpf/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/tracee_ports.sh /usr/local/bin/entrypoint.sh
+```
+
+At runtime, you still need `--privileged`, `pid: host`, and mounts shown below.
 
 ## Quick start (Linux host)
 
@@ -42,6 +68,14 @@ make ebpf-run     # build and start the eBPF watcher
 make ebpf-logs    # tail logs
 # ... later
 make ebpf-stop    # stop the watcher
+```
+
+Build the eBPF watcher image (portable installer is the default):
+
+```bash
+DOCKER_BUILDKIT=1 docker build -f ebpf/Dockerfile ebpf \
+  --build-arg TRACEE_VERSION=latest \
+  -t ebpf-portwatcher:portable
 ```
 
 Expected first log:
