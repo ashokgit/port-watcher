@@ -375,6 +375,61 @@ Notes:
 - Detects in-container listening sockets only. It does not observe the host or other containers' namespaces.
 - Detection is still sampling-based. With burst scanning and a low-overhead backend, the capture rate for short-lived sockets is high, but an ultra-short listener that opens and closes entirely between all burst samples can still be missed. Lower `BURST_DELAY`, increase `BURST_SCANS`, or reduce `SCAN_INTERVAL` to increase fidelity.
 
+### Most optimal setups (resource-wise)
+
+- **Linux (preferred) — eBPF-only, host-wide, lossless**
+  - Run only the eBPF watcher with the Listener; disable per-container polling to avoid duplicate events.
+  - Recommended env for `ebpf-portwatcher` in `docker-compose.yml`:
+    ```yaml
+    services:
+      ebpf-portwatcher:
+        environment:
+          TRACE_EBPF_EVENTS: "bind,close"
+          EBPF_ONLY: "1"
+          EBPF_FALLBACK: "0"
+          LISTENER_URL: "http://listner-api:8080/ingest"
+    ```
+  - Start only the Listener and eBPF services:
+    ```bash
+    docker compose up -d listner-api ebpf-portwatcher
+    ```
+
+- **macOS Docker Desktop or restricted Linux — lightweight polling per container**
+  - Use `/proc` backend and modest interval; filter ports to reduce work.
+  - Recommended env for `portwatcher`:
+    ```yaml
+    services:
+      portwatcher:
+        environment:
+          USE_PROC: "1"
+          SCAN_INTERVAL: "3"    # 3–5 keeps CPU low
+          BURST_SCANS: "1"
+          VERBOSE_LSOF: "0"
+          CLOSE_GRACE_MS: "200"  # debounce close/reopen
+          WATCH_PORTS: "80 443 3000-3005"  # narrow scope
+          LISTENER_URL: "http://listner-api:8080/ingest"
+    ```
+
+- **High-fidelity (transient-heavy) without eBPF**
+  - Polling with bursts (expect higher CPU):
+    ```yaml
+    services:
+      portwatcher:
+        environment:
+          USE_PROC: "1"
+          SCAN_INTERVAL: "1"
+          BURST_SCANS: "5"
+          BURST_DELAY: "0.02"
+          CLOSE_GRACE_MS: "200"
+    ```
+
+#### Guidelines
+
+- Do not run both eBPF and polling for the same scope; it doubles events.
+- Keep `VERBOSE_LSOF=0`; rely on `ss -p` first.
+- Prefer `WATCH_PORTS`/`DESIRED_PORTS` to reduce scanning work.
+- On Linux, eBPF-only gives lowest CPU and lossless results; on macOS, optimized polling is the best option.
+
 ## Repository layout
 
 ```
