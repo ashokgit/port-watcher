@@ -311,6 +311,30 @@ make logs-since VERIFY_SINCE=30                  # show last 30s logs
 make verify-port-logs PORT=5801 VERIFY_SINCE=60  # grep events for a specific port
 ```
 
+### Graceful shutdown behavior
+
+When the watcher container is stopped (SIGTERM/SIGINT/QUIT — e.g., `docker stop`), it flushes "close" events for all currently tracked open ports before exiting. This ensures consumers receive a final state update even if the container exits while listeners are still open.
+
+- Sources in emitted events:
+  - polling watcher (`listen_ports.sh`): `"source":"shutdown"`
+  - universal fallback (eBPF sampler): `"source":"shutdown-fallback"`
+  - Tracee eBPF watcher: `"source":"shutdown-ebpf"`
+
+Quick test:
+
+```bash
+docker compose up -d --build
+
+# Open a demo port inside the watcher container
+docker exec -it portwatcher bash -lc "node -e \"require('http').createServer(()=>{}).listen(5000)\""
+
+# Stop the container to trigger graceful shutdown
+docker stop portwatcher
+
+# Verify a close event with source=shutdown was recorded
+docker exec listner-api sh -lc "tail -n 100 /logs/portwatcher.log | grep '\"event\":\"close\"' | tail -n 1"
+```
+
 ### Event-driven alternatives (eBPF)
 
 For near-zero-overhead and lossless detection, a companion eBPF watcher is available under `ebpf/` using Tracee. It listens to `bind()`/`listen()`/`close()` and emits events as ports are opened/closed (no polling).
