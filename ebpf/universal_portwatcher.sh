@@ -10,6 +10,41 @@ burst_delay="${BURST_DELAY:-0.05}"
 close_grace_ms="${CLOSE_GRACE_MS:-0}"
 verbose_lsof="${VERBOSE_LSOF:-0}"
 
+# Optional filter: only watch specific ports when provided
+# Accepts comma/space separated list and ranges like 3000-3005
+port_filter_raw="${WATCH_PORTS:-${DESIRED_PORTS:-}}"
+port_filter_enabled=0
+declare -A allowed_ports
+allowed_ports_regex=""
+
+expand_and_set_allowed_ports() {
+  local raw="$1" tok a b p list
+  raw="${raw//,/ }"; raw="${raw//$'\n'/ }"; raw="${raw//$'\t'/ }"
+  for tok in $raw; do
+    tok="${tok//[^0-9-]/}"
+    if [[ -z "$tok" ]]; then continue; fi
+    if [[ "$tok" =~ ^[0-9]+-[0-9]+$ ]]; then
+      IFS='-' read -r a b <<<"$tok"
+      if (( a <= b )); then
+        for ((p=a; p<=b; p++)); do allowed_ports["$p"]=1; done
+      else
+        for ((p=b; p<=a; p++)); do allowed_ports["$p"]=1; done
+      fi
+    elif [[ "$tok" =~ ^[0-9]+$ ]]; then
+      allowed_ports["$tok"]=1
+    fi
+  done
+  if (( ${#allowed_ports[@]} > 0 )); then
+    port_filter_enabled=1
+    list="$(printf "%s|" "${!allowed_ports[@]}")"
+    allowed_ports_regex="^(${list%|})$"
+  fi
+}
+
+if [[ -n "$port_filter_raw" ]]; then
+  expand_and_set_allowed_ports "$port_filter_raw"
+fi
+
 declare -A port_to_pids
 declare -A port_last_seen_ms
 prev_ports=""
@@ -105,6 +140,9 @@ echo "[ebpf-fallback] Starting universal watcher. Interval: ${scan_interval}s, b
 if [[ -n "$listener_url" ]]; then
   echo "[ebpf-fallback] Listener URL configured: $listener_url"
 fi
+if (( port_filter_enabled == 1 )); then
+  echo "[ebpf-fallback] Port filter enabled. Watching ${#allowed_ports[@]} port(s): $(printf '%s ' "${!allowed_ports[@]}" | xargs -n100 echo)"
+fi
 
 while true; do
   ports_seen_in_burst=""
@@ -112,6 +150,9 @@ while true; do
 
   for ((i=1; i<=burst_scans; i++)); do
     ports_now=$(collect_ports_once)
+    if (( port_filter_enabled == 1 )); then
+      ports_now=$(echo "$ports_now" | grep -E "$allowed_ports_regex" || true)
+    fi
 
     if [[ -z "$burst_end_ports" ]]; then
       burst_end_ports="$ports_now"

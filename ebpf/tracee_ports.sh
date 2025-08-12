@@ -32,6 +32,41 @@ if ldd "${TRACEE_BIN}" 2>/dev/null | grep -q 'musl'; then
 fi
 
 listener_url="${LISTENER_URL:-}"
+
+# Optional filter: only watch specific ports when provided
+# Accepts comma/space separated list and ranges like 3000-3005
+port_filter_raw="${WATCH_PORTS:-${DESIRED_PORTS:-}}"
+port_filter_enabled=0
+declare -A allowed_ports
+allowed_ports_regex=""
+
+expand_and_set_allowed_ports() {
+  local raw="$1" tok a b p list
+  raw="${raw//,/ }"; raw="${raw//$'\n'/ }"; raw="${raw//$'\t'/ }"
+  for tok in $raw; do
+    tok="${tok//[^0-9-]/}"
+    if [[ -z "$tok" ]]; then continue; fi
+    if [[ "$tok" =~ ^[0-9]+-[0-9]+$ ]]; then
+      IFS='-' read -r a b <<<"$tok"
+      if (( a <= b )); then
+        for ((p=a; p<=b; p++)); do allowed_ports["$p"]=1; done
+      else
+        for ((p=b; p<=a; p++)); do allowed_ports["$p"]=1; done
+      fi
+    elif [[ "$tok" =~ ^[0-9]+$ ]]; then
+      allowed_ports["$tok"]=1
+    fi
+  done
+  if (( ${#allowed_ports[@]} > 0 )); then
+    port_filter_enabled=1
+    list="$(printf "%s|" "${!allowed_ports[@]}")"
+    allowed_ports_regex="^(${list%|})$"
+  fi
+}
+
+if [[ -n "$port_filter_raw" ]]; then
+  expand_and_set_allowed_ports "$port_filter_raw"
+fi
 # Identify container
 detect_container_id() {
   local cid
@@ -47,6 +82,9 @@ if [[ -z "$container_id" ]]; then container_id="$container_name"; fi
 echo "[ebpf] Starting Tracee-based watcher. events=${TRACE_EVENTS}" >&2
 if [[ -n "$listener_url" ]]; then
   echo "[ebpf] Listener URL configured: $listener_url" >&2
+fi
+if (( port_filter_enabled == 1 )); then
+  echo "[ebpf] Port filter enabled. Watching ${#allowed_ports[@]} port(s): $(printf '%s ' "${!allowed_ports[@]}" | xargs -n100 echo)" >&2
 fi
 
 declare -A FD_PORT_BY_PIDFD   # key: "pid:fd" -> port
@@ -109,6 +147,12 @@ process_bind_event() {
     return 0
   fi
 
+  if (( port_filter_enabled == 1 )); then
+    if [[ ! "$port" =~ $allowed_ports_regex ]]; then
+      return 0
+    fi
+  fi
+
   local key
   key="${pid}:${fd}"
 
@@ -140,6 +184,10 @@ process_close_event() {
   key="${pid}:${fd}"
   port="${FD_PORT_BY_PIDFD[$key]:-}"
   if [[ -n "$port" ]]; then
+    if (( port_filter_enabled == 1 )) && [[ ! "$port" =~ $allowed_ports_regex ]]; then
+      unset 'FD_PORT_BY_PIDFD[$key]'
+      return 0
+    fi
     line="[$(date)] Port closed: ${port} (last pid: ${pid})"
     echo "$line"
     if [[ -n "$listener_url" ]]; then

@@ -135,6 +135,18 @@ make run USE_PROC=1   # use /proc backend
 make run VERBOSE_LSOF=1   # enable detailed lsof dump on new ports
 ```
 
+- Filter to specific ports only (comma/space separated list and/or ranges):
+
+```bash
+# watch only ports 3000, 5000-5002, and 7001
+make run WATCH_PORTS="3000,5000-5002 7001"
+
+# alias env name supported as well
+make run DESIRED_PORTS="80 443 8080"
+```
+
+See `docker-compose.yml` for commented examples under `portwatcher`, `ebpf-portwatcher`, `nodejs-tester`, and `python-tester` services.
+
 - Close-event debounce window (milliseconds):
 
 ```bash
