@@ -3,9 +3,9 @@ FROM alpine:3.20
 # Version of Tracee to install (GitHub release tag or "latest")
 ARG TRACEE_VERSION=latest
 # Whether to install Tracee at build time (1=yes, 0=skip for fallback-only builds)
-ARG INSTALL_TRACEE=1
+ARG INSTALL_TRACEE=0
 
-RUN apk add --no-cache bash jq supervisor zlib libelf ca-certificates curl tar
+RUN apk add --no-cache bash jq zlib libelf ca-certificates curl tar
 
 WORKDIR /app
 
@@ -27,9 +27,7 @@ RUN chmod +x /usr/local/bin/universal_portwatcher.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Supervisor config to manage the ebpf watcher
-COPY supervisord.tracee.conf /etc/supervisor/conf.d/tracee.conf
-
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/tracee.conf"]
+# Run entrypoint directly; rely on container restart policy instead of supervisor
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 

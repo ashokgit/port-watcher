@@ -384,7 +384,8 @@ Notes:
     services:
       ebpf-portwatcher:
         environment:
-          TRACE_EBPF_EVENTS: "bind,close"
+          TRACE_EBPF_EVENTS: "bind,close"   # minimal event set
+          TRACEE_ARGS: ""                  # optional extra filters (e.g., --container)
           EBPF_ONLY: "1"
           EBPF_FALLBACK: "0"
           LISTENER_URL: "http://listner-api:8080/ingest"

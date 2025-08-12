@@ -127,15 +127,28 @@ now_ms() {
   fi
 }
 
+declare -A PID_MAP_BY_PORT  # refreshed each burst when not using /proc
+
 # Collect currently listening TCP/UDP ports (numeric), one per line, sorted unique
 collect_ports_once() {
   if [[ "$use_proc_backend" == "1" ]]; then
     collect_ports_from_proc
   else
-    # -n: numeric; -l: listening; -t: TCP; -u: UDP; -H: no header
-    ss -tulnH 2>/dev/null \
-      | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n}' \
-      | sort -u || true
+    # Single pass to also build pid map to avoid per-port process resolution
+    mapfile -t __ss_lines < <(ss -tulnpH 2>/dev/null || true)
+    : "${__ss_lines[@]+set}"
+    # Reset pid map for this scan if first in burst
+    if [[ -z "$ports_seen_in_burst" ]]; then PID_MAP_BY_PORT=(); fi
+    printf '%s\n' "${__ss_lines[@]}" \
+      | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n"|"$0}' \
+      | while IFS='|' read -r p full; do
+          [[ -z "$p" ]] && continue
+          # Extract pids once; `pid=1234,` patterns possibly multiple
+          pids=$(echo "$full" | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo)
+          if [[ -n "$pids" ]]; then PID_MAP_BY_PORT["$p"]="$pids"; fi
+          echo "$p"
+        done \
+      | grep -E '^[0-9]+$' | sort -u || true
   fi
 }
 
@@ -169,17 +182,20 @@ collect_ports_from_proc() {
 resolve_pids_for_port() {
   local port="$1"
   local pids
-  # Try ss with process info first (faster than lsof); extract pid=...
-  pids=$( { ss -tulnpH "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo; } || true )
-  if [[ -z "${pids}" ]]; then
-    # Fallback to lsof
-    pids=$( { lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u | xargs echo; } || true )
-  fi
-  if [[ -z "${pids}" ]]; then
-    pids=$( { lsof -nP -t -iUDP:"$port" 2>/dev/null | sort -u | xargs echo; } || true )
-  fi
-  if [[ -z "${pids}" ]]; then
-    pids=$( { lsof -nP -t -i :"$port" 2>/dev/null | sort -u | xargs echo; } || true )
+  # Prefer the single-pass map created from ss; fall back only if empty
+  pids="${PID_MAP_BY_PORT[$port]:-}"
+  if [[ -z "$pids" ]]; then
+    # Fallbacks: targeted ss and then lsof
+    pids=$( { ss -tulnpH "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo; } || true )
+    if [[ -z "${pids}" ]]; then
+      pids=$( { lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u | xargs echo; } || true )
+    fi
+    if [[ -z "${pids}" ]]; then
+      pids=$( { lsof -nP -t -iUDP:"$port" 2>/dev/null | sort -u | xargs echo; } || true )
+    fi
+    if [[ -z "${pids}" ]]; then
+      pids=$( { lsof -nP -t -i :"$port" 2>/dev/null | sort -u | xargs echo; } || true )
+    fi
   fi
   echo "${pids}"
 }

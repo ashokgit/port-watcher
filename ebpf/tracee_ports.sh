@@ -5,8 +5,10 @@ set -euo pipefail
 # - Detects bind()/listen()/close() events and emits open/close logs
 # - Tracks pid+fd -> port mapping to infer closures reliably
 
-TRACE_EVENTS_DEFAULT="security_socket_bind,close"
+# Default to minimal event set for efficiency; can be overridden via TRACE_EBPF_EVENTS
+TRACE_EVENTS_DEFAULT="bind,close"
 TRACE_EVENTS="${TRACE_EBPF_EVENTS:-$TRACE_EVENTS_DEFAULT}"
+TRACEE_ARGS="${TRACEE_ARGS:-}"
 
 # Find tracee binary (works with aquasec/tracee image or locally installed tracee)
 find_tracee() {
@@ -125,33 +127,16 @@ JQ_PORT='(
 JQ_FAMILY='((${JQ_ADDR_OBJ}) | .sa_family // "")'
 
 process_bind_event() {
-  local json="$1"
-  local pid fd port family
-  pid=$(jq -r "${JQ_PID}" <<<"$json" 2>/dev/null || echo 0)
-  fd=$(jq -r "${JQ_FD}" <<<"$json" 2>/dev/null || echo "")
-  port=$(jq -r "${JQ_PORT}" <<<"$json" 2>/dev/null || echo "")
-  family=$(jq -r "${JQ_FAMILY}" <<<"$json" 2>/dev/null || echo "")
+  # Args: pid fd port family
+  local pid="$1" fd="$2" port="$3" family="$4"
 
-  # Normalize
   [[ "$pid" == "null" || -z "$pid" ]] && pid=0
   [[ "$fd" == "null" || -z "$fd" ]] && fd=""
   [[ "$port" == "null" || -z "$port" ]] && port=""
 
-  # Ignore families without concept of numeric port
-  if [[ "$family" == "AF_UNIX" ]]; then
-    return 0
-  fi
-
-  # Basic sanity
-  if [[ -z "$port" || "$port" == "0" ]]; then
-    return 0
-  fi
-
-  if (( port_filter_enabled == 1 )); then
-    if [[ ! "$port" =~ $allowed_ports_regex ]]; then
-      return 0
-    fi
-  fi
+  if [[ "$family" == "AF_UNIX" ]]; then return 0; fi
+  if [[ -z "$port" || "$port" == "0" ]]; then return 0; fi
+  if (( port_filter_enabled == 1 )) && [[ ! "$port" =~ $allowed_ports_regex ]]; then return 0; fi
 
   local key
   key="${pid}:${fd}"
@@ -163,7 +148,7 @@ process_bind_event() {
   echo "$line"
   if [[ -n "$listener_url" ]]; then
     payload=$(printf '{"event":"open","port":%s,"pid":%s,"fd":%s,"container_id":"%s","container_name":"%s","source":"ebpf"}' "$port" "$pid" "${fd:-0}" "$container_id" "$container_name")
-    curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+    curl -sS -m 1 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
   fi
 }
 
@@ -173,10 +158,8 @@ process_listen_event() {
 }
 
 process_close_event() {
-  local json="$1"
-  local pid fd
-  pid=$(jq -r "${JQ_PID}" <<<"$json" 2>/dev/null || echo 0)
-  fd=$(jq -r "${JQ_FD}" <<<"$json" 2>/dev/null || echo "")
+  # Args: pid fd
+  local pid="$1" fd="$2"
   [[ "$pid" == "null" || -z "$pid" ]] && pid=0
   [[ "$fd" == "null" || -z "$fd" ]] && fd=""
 
@@ -192,7 +175,7 @@ process_close_event() {
     echo "$line"
     if [[ -n "$listener_url" ]]; then
       payload=$(printf '{"event":"close","port":%s,"last_pid":%s,"container_id":"%s","container_name":"%s","source":"ebpf"}' "$port" "$pid" "$container_id" "$container_name")
-      curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+      curl -sS -m 1 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
     fi
     unset 'FD_PORT_BY_PIDFD[$key]'
   fi
@@ -209,18 +192,22 @@ while IFS= read -r line; do
 
   case "$ev" in
     security_socket_bind|bind)
-      process_bind_event "$line"
+      # Extract pid, fd, port, family in a single jq call
+      read -r pid fd port family < <(jq -r "[${JQ_PID}, ${JQ_FD}, ${JQ_PORT}, ${JQ_FAMILY}] | @tsv" <<<"$line" 2>/dev/null || echo $'0\t\t\t')
+      process_bind_event "$pid" "$fd" "$port" "$family"
       ;;
     listen)
       process_listen_event "$line"
       ;;
     close)
-      process_close_event "$line"
+      # Extract pid, fd in a single jq call
+      read -r pid fd < <(jq -r "[${JQ_PID}, ${JQ_FD}] | @tsv" <<<"$line" 2>/dev/null || echo $'0\t')
+      process_close_event "$pid" "$fd"
       ;;
     *)
       # Ignore other events
       ;;
   esac
-done < <(LIBBPFGO_OSRELEASE_FILE="/etc/os-release-host" "${TRACEE_BIN}" --output json --events "${TRACE_EVENTS}" 2>/dev/null)
+done < <(LIBBPFGO_OSRELEASE_FILE="/etc/os-release-host" "${TRACEE_BIN}" --output json --events "${TRACE_EVENTS}" ${TRACEE_ARGS} 2>/dev/null)
 
 

@@ -24,13 +24,16 @@ services:
     build:
       context: ./ebpf
       dockerfile: Dockerfile
+      args:
+        INSTALL_TRACEE: ${INSTALL_TRACEE:-0}
     container_name: ebpf-portwatcher
     tty: true
     # eBPF requires privileged or CAP_BPF & related caps depending on kernel
     privileged: true
     pid: host
     environment:
-      - TRACE_EBPF_EVENTS=${TRACE_EBPF_EVENTS:-bind,security_socket_bind,listen,close}
+      - TRACE_EBPF_EVENTS=${TRACE_EBPF_EVENTS:-bind,close}
+      - TRACEE_ARGS=${TRACEE_ARGS:-}
       - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
       - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
       - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}

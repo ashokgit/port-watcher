@@ -46,6 +46,7 @@ if [[ -n "$port_filter_raw" ]]; then
 fi
 
 declare -A port_to_pids
+declare -A PID_MAP_BY_PORT
 declare -A port_last_seen_ms
 prev_ports=""
 
@@ -106,9 +107,19 @@ collect_ports_from_proc() {
 
 collect_ports_once() {
   if command -v ss >/dev/null 2>&1; then
-    ss -tulnH 2>/dev/null \
-      | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n}' \
-      | sort -u || true
+    # Build pid map once per burst start
+    mapfile -t __ss_lines < <(ss -tulnpH 2>/dev/null || true)
+    : "${__ss_lines[@]+set}"
+    if [[ -z "$ports_seen_in_burst" ]]; then PID_MAP_BY_PORT=(); fi
+    printf '%s\n' "${__ss_lines[@]}" \
+      | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n"|"$0}' \
+      | while IFS='|' read -r p full; do
+          [[ -z "$p" ]] && continue
+          pids=$(echo "$full" | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo)
+          if [[ -n "$pids" ]]; then PID_MAP_BY_PORT["$p"]="$pids"; fi
+          echo "$p"
+        done \
+      | grep -E '^[0-9]+$' | sort -u || true
   else
     collect_ports_from_proc
   fi
@@ -117,9 +128,12 @@ collect_ports_once() {
 resolve_pids_for_port() {
   local port="$1"
   local pids
-  pids=$( { ss -tulnpH "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo; } || true )
+  pids="${PID_MAP_BY_PORT[$port]:-}"
   if [[ -z "$pids" ]]; then
-    pids=$( { lsof -nP -t -i :"$port" 2>/dev/null | sort -u | xargs echo; } || true )
+    pids=$( { ss -tulnpH "sport = :$port" 2>/dev/null | grep -o 'pid=[0-9]\+' | cut -d= -f2 | sort -u | xargs echo; } || true )
+    if [[ -z "$pids" ]]; then
+      pids=$( { lsof -nP -t -i :"$port" 2>/dev/null | sort -u | xargs echo; } || true )
+    fi
   fi
   echo "$pids"
 }
@@ -180,7 +194,7 @@ while true; do
         if [[ -n "$listener_url" ]]; then
           if [[ -n "$pids" ]]; then pjson="[$(echo "$pids" | tr ' ' ',')]"; else pjson="[]"; fi
           payload=$(printf '{"event":"open","port":%s,"pids":%s,"container_id":"%s","container_name":"%s","source":"fallback"}' "$p" "$pjson" "$container_id" "$container_name")
-          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+          curl -sS -m 1 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         if [[ "$verbose_lsof" == "1" ]]; then lsof -nP -i :"$p" 2>/dev/null || true; fi
       done <<< "$newly_seen"
@@ -209,7 +223,7 @@ while true; do
         if [[ -n "$listener_url" ]]; then
           if [[ -n "$last_pids" ]]; then lpjson="[$(echo "$last_pids" | tr ' ' ',')]"; else lpjson="[]"; fi
           payload=$(printf '{"event":"close","port":%s,"last_pids":%s,"container_id":"%s","container_name":"%s","source":"fallback"}' "$p" "$lpjson" "$container_id" "$container_name")
-          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+          curl -sS -m 1 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         unset 'port_to_pids[$p]'
         unset 'port_last_seen_ms[$p]'
