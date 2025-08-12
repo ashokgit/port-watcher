@@ -14,6 +14,32 @@ declare -A port_to_pids
 declare -A port_last_seen_ms
 prev_ports=""
 
+graceful_shutdown() {
+  if [[ "${__shutdown_done:-0}" == "1" ]]; then return; fi
+  __shutdown_done=1
+  echo "[ebpf-fallback] Received termination signal; flushing close events before exit"
+  if [[ -n "$prev_ports" ]]; then
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      last_pids="${port_to_pids[$p]:-}"
+      if [[ -n "$last_pids" ]]; then
+        line="[$(date)] Port closed: $p (last pids: ${last_pids})"
+      else
+        line="[$(date)] Port closed: $p"
+      fi
+      echo "$line"
+      if [[ -n "$listener_url" ]]; then
+        if [[ -n "$last_pids" ]]; then lpjson="[$(echo "$last_pids" | tr ' ' ',')]"; else lpjson="[]"; fi
+        payload=$(printf '{"event":"close","port":%s,"last_pids":%s,"container_id":"%s","container_name":"%s","source":"shutdown-fallback"}' "$p" "$lpjson" "$container_id" "$container_name")
+        curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+      fi
+    done <<< "$prev_ports"
+  fi
+  exit 0
+}
+
+trap 'graceful_shutdown' TERM INT QUIT EXIT
+
 now_ms() {
   local t
   t=$(date +%s%3N 2>/dev/null || true)

@@ -52,6 +52,26 @@ fi
 declare -A FD_PORT_BY_PIDFD   # key: "pid:fd" -> port
 declare -A LAST_PID_BY_PORT    # key: port -> last pid (best-effort)
 
+# Gracefully emit close events for any known open ports
+graceful_shutdown() {
+  if [[ "${__shutdown_done:-0}" == "1" ]]; then return; fi
+  __shutdown_done=1
+  echo "[ebpf] Received termination signal; flushing close events before exit" >&2
+  for port in "${!LAST_PID_BY_PORT[@]}"; do
+    [[ -z "$port" ]] && continue
+    pid="${LAST_PID_BY_PORT[$port]:-0}"
+    line="[$(date)] Port closed: ${port} (last pid: ${pid})"
+    echo "$line"
+    if [[ -n "$listener_url" ]]; then
+      payload=$(printf '{"event":"close","port":%s,"last_pid":%s,"container_id":"%s","container_name":"%s","source":"shutdown-ebpf"}' "$port" "$pid" "$container_id" "$container_name")
+      curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+    fi
+  done
+  exit 0
+}
+
+trap 'graceful_shutdown' TERM INT QUIT EXIT
+
 # jq helpers that are resilient to schema differences across Tracee versions
 JQ_EVENT_NAME='(.eventName // .event_name // .event.name // .name // "")'
 JQ_PID='(.processId // .pid // .process.pid // .threadId // .tid // 0)'
@@ -130,9 +150,7 @@ process_close_event() {
   fi
 }
 
-# Start Tracee and process its JSON output line-by-line
-LIBBPFGO_OSRELEASE_FILE="/etc/os-release-host" \
-"${TRACEE_BIN}" --output json --events "${TRACE_EVENTS}" 2>/dev/null |
+# Start Tracee and process its JSON output line-by-line (avoid pipeline subshell)
 while IFS= read -r line; do
   # Fast-path: ignore non-JSON
   [[ -z "$line" || "$line" != \{* ]] && continue
@@ -155,6 +173,6 @@ while IFS= read -r line; do
       # Ignore other events
       ;;
   esac
-done
+done < <(LIBBPFGO_OSRELEASE_FILE="/etc/os-release-host" "${TRACEE_BIN}" --output json --events "${TRACE_EVENTS}" 2>/dev/null)
 
 

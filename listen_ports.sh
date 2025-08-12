@@ -48,6 +48,34 @@ container_name="${CONTAINER_NAME:-$(hostname 2>/dev/null || cat /etc/hostname 2>
 container_id="${CONTAINER_ID:-$(detect_container_id)}"
 if [[ -z "$container_id" ]]; then container_id="$container_name"; fi
 
+# Gracefully flush close events on container stop
+graceful_shutdown() {
+  if [[ "${__shutdown_done:-0}" == "1" ]]; then return; fi
+  __shutdown_done=1
+  echo "[portwatcher] Received termination signal; flushing close events before exit"
+  if [[ -n "$prev_ports" ]]; then
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      last_pids="${port_to_pids[$p]:-}"
+      if [[ -n "$last_pids" ]]; then
+        last_pids_json="[$(echo "$last_pids" | tr ' ' ',')]"
+        line="[$(date)] Port closed: $p (last pids: ${last_pids})"
+      else
+        last_pids_json="[]"
+        line="[$(date)] Port closed: $p"
+      fi
+      echo "$line"
+      if [[ -n "$listener_url" ]]; then
+        payload=$(printf '{"event":"close","port":%s,"last_pids":%s,"container_id":"%s","container_name":"%s","source":"shutdown"}' "$p" "$last_pids_json" "$container_id" "$container_name")
+        curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+      fi
+    done <<< "$prev_ports"
+  fi
+  exit 0
+}
+
+trap 'graceful_shutdown' TERM INT QUIT EXIT
+
 # Time in milliseconds (best-effort)
 now_ms() {
   local t
