@@ -235,15 +235,28 @@ make logs-since VERIFY_SINCE=30                  # show last 30s logs
 make verify-port-logs PORT=5801 VERIFY_SINCE=60  # grep events for a specific port
 ```
 
-### Future Roadmap: Event-driven alternatives (eBPF)
+### Event-driven alternatives (eBPF)
 
-For near-zero-overhead and lossless detection, consider an event-driven approach using eBPF (listening to `bind()`/`listen()`):
+For near-zero-overhead and lossless detection, a companion eBPF watcher is available under `ebpf/` using Tracee. It listens to `bind()`/`listen()`/`close()` and emits events as ports are opened/closed (no polling).
 
-- Tracee: runtime tracing focused on security/forensics.
-- Cilium Tetragon: security observability and runtime enforcement.
-- Falco: CNCF runtime security with an eBPF driver.
+- Tracee: runtime tracing focused on security/forensics (used here)
+- Cilium Tetragon: security observability and runtime enforcement
+- Falco: CNCF runtime security with an eBPF driver
 
-These tools emit events as ports are opened/closed instead of polling, and can integrate with alerting/metrics stacks.
+Run the eBPF watcher (requires Linux with eBPF support; Docker Desktop on macOS will not expose kernel eBPF from the host):
+
+```bash
+make ebpf-run
+# watch logs
+make ebpf-logs
+# stop
+make ebpf-stop
+```
+
+Notes:
+- The eBPF service runs under Supervisor inside `ebpf/` image and logs to stdout.
+- The container is started with `privileged: true` and mounts `/lib/modules`, `/usr/src`, `/sys/kernel/debug`, `/sys/fs/bpf` for Tracee.
+- Events shown are similar to `listen_ports.sh` output, e.g., `New port opened: 5000 (pid: 123, fd: 7)` and `Port closed: 5000 (last pid: 123)`.
 
 ## Limitations
 

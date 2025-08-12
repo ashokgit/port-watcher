@@ -1,7 +1,8 @@
 .PHONY: help build run run-hf run-ss run-proc run-sv stop clean logs logs-since exec shell \
         test-http test-udp test-3000 kill-port \
         test-tcp-transient test-udp-transient test-tcp-burst test-udp-burst \
-        verify-port-logs verify-suite
+        verify-port-logs verify-suite \
+        ebpf-build ebpf-run ebpf-logs ebpf-stop
 
 PROJECT := portwatcher
 SCAN_INTERVAL ?= 2
@@ -36,6 +37,10 @@ help:
 	@echo "  test-udp-burst       Open/close multiple UDP ports quickly (BURST_COUNT, BASE_PORT, HOLD_MS, INTERVAL_S)"
 	@echo "  verify-port-logs     Grep recent logs for a specific PORT (VERIFY_SINCE, PORT)"
 	@echo "  verify-suite         Run a sequence of tests and show recent logs"
+	@echo "  ebpf-build           Build the eBPF Tracee watcher image"
+	@echo "  ebpf-run             Start the eBPF Tracee watcher under Supervisor"
+	@echo "  ebpf-logs            Tail eBPF watcher logs"
+	@echo "  ebpf-stop            Stop the eBPF watcher"
 
 build:
 	SCAN_INTERVAL=$(SCAN_INTERVAL) docker compose build
@@ -95,6 +100,23 @@ stop:
 clean:
 	docker compose down --volumes --remove-orphans
 	docker image rm $$(docker images -q --filter=reference='*$(PROJECT)*') 2>/dev/null || true
+
+# eBPF-based watcher (Tracee)
+EBPF_PROJECT := ebpf-portwatcher
+EBPF_DC := -f ebpf/docker-compose.ebpf.yml
+
+ebpf-build:
+	DOCKER_BUILDKIT=1 docker compose $(EBPF_DC) build
+
+ebpf-run: ebpf-build
+	DOCKER_BUILDKIT=1 docker compose $(EBPF_DC) up -d
+	@echo "\nEBPF watcher is running. Use 'make ebpf-logs' to observe events."
+
+ebpf-logs:
+	docker compose $(EBPF_DC) logs -f | cat
+
+ebpf-stop:
+	docker compose $(EBPF_DC) down
 
 # Convenience target to demonstrate a new port opening inside the container
 test-http:

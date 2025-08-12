@@ -1,0 +1,22 @@
+services:
+  ebpf-portwatcher:
+    build:
+      context: .
+    container_name: ebpf-portwatcher
+    tty: true
+    # eBPF requires privileged or CAP_BPF & related caps depending on kernel
+    privileged: true
+    pid: host
+    environment:
+      - TRACE_EBPF_EVENTS=${TRACE_EBPF_EVENTS:-bind,security_socket_bind,listen,close}
+      - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
+      - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /etc/os-release:/etc/os-release-host:ro
+    # No host ports exposed; watcher logs to stdout
+
+
