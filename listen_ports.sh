@@ -35,6 +35,19 @@ if [[ -n "$listener_url" ]]; then
   echo "[portwatcher] Listener URL configured: $listener_url"
 fi
 
+# Identify container
+detect_container_id() {
+  local cid
+  cid=$(sed -nE 's#^.*/([0-9a-f]{12,64})(?:\\.scope)?$#\1#p' /proc/self/cgroup 2>/dev/null | tail -n1 || true)
+  if [[ -z "$cid" ]]; then
+    cid=$(sed -nE 's#^.*/containers/([0-9a-f]{12,64})/.*$#\1#p' /proc/self/mountinfo 2>/dev/null | head -n1 || true)
+  fi
+  echo "$cid"
+}
+container_name="${CONTAINER_NAME:-$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo unknown)}"
+container_id="${CONTAINER_ID:-$(detect_container_id)}"
+if [[ -z "$container_id" ]]; then container_id="$container_name"; fi
+
 # Time in milliseconds (best-effort)
 now_ms() {
   local t
@@ -133,13 +146,15 @@ while true; do
         pids=$(resolve_pids_for_port "$p")
         port_to_pids["$p"]="${pids}"
         if [[ -n "${pids}" ]]; then
-          line="[$(date)] New port opened: $p (pids: ${pids})"
+          pids_json="[$(echo "${pids}" | tr ' ' ',')]"
         else
-          line="[$(date)] New port opened: $p (pids: unknown)"
+          pids_json="[]"
         fi
+        line="[$(date)] New port opened: $p (pids: ${pids:-unknown})"
         echo "$line"
         if [[ -n "$listener_url" ]]; then
-          curl -sS -m 2 -H 'Content-Type: text/plain' --data "$line" "$listener_url" >/dev/null 2>&1 || true
+          payload=$(printf '{"event":"open","port":%s,"pids":%s,"container_id":"%s","container_name":"%s","source":"polling"}' "$p" "$pids_json" "$container_id" "$container_name")
+          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         if [[ "${verbose_lsof}" == "1" ]]; then
           lsof -nP -i :"$p" 2>/dev/null || true
@@ -170,13 +185,16 @@ while true; do
         fi
         last_pids="${port_to_pids[$p]:-}"
         if [[ -n "$last_pids" ]]; then
+          last_pids_json="[$(echo "$last_pids" | tr ' ' ',')]"
           line="[$(date)] Port closed: $p (last pids: ${last_pids})"
         else
+          last_pids_json="[]"
           line="[$(date)] Port closed: $p"
         fi
         echo "$line"
         if [[ -n "$listener_url" ]]; then
-          curl -sS -m 2 -H 'Content-Type: text/plain' --data "$line" "$listener_url" >/dev/null 2>&1 || true
+          payload=$(printf '{"event":"close","port":%s,"last_pids":%s,"container_id":"%s","container_name":"%s","source":"polling"}' "$p" "$last_pids_json" "$container_id" "$container_name")
+          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         unset 'port_to_pids[$p]'
         unset 'port_last_seen_ms[$p]'

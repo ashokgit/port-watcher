@@ -11,6 +11,7 @@ services:
       - TRACE_EBPF_EVENTS=${TRACE_EBPF_EVENTS:-bind,security_socket_bind,listen,close}
       - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
       - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
+      - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
     volumes:
       - /lib/modules:/lib/modules:ro
       - /usr/src:/usr/src:ro

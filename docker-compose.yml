@@ -15,6 +15,27 @@ services:
     ports:
       - "3000:3000"
 
+  ebpf-portwatcher:
+    build:
+      context: ./ebpf
+      dockerfile: Dockerfile
+    container_name: ebpf-portwatcher
+    tty: true
+    # eBPF requires privileged or CAP_BPF & related caps depending on kernel
+    privileged: true
+    pid: host
+    environment:
+      - TRACE_EBPF_EVENTS=${TRACE_EBPF_EVENTS:-bind,security_socket_bind,listen,close}
+      - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
+      - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
+      - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /usr/src:/usr/src:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /etc/os-release:/etc/os-release-host:ro
+
   listner-api:
     build:
       context: ./listner-api
@@ -27,6 +48,26 @@ services:
       - listner_logs:/logs
     ports:
       - "8080:8080"
+
+  nodejs-tester:
+    build:
+      context: .
+      dockerfile: nodejs-tester/Dockerfile
+    container_name: nodejs-tester
+    depends_on:
+      - listner-api
+    environment:
+      - LISTENER_URL=http://listner-api:8080/ingest
+
+  python-tester:
+    build:
+      context: .
+      dockerfile: python-tester/Dockerfile
+    container_name: python-tester
+    depends_on:
+      - listner-api
+    environment:
+      - LISTENER_URL=http://listner-api:8080/ingest
 
 volumes:
   listner_logs:

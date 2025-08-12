@@ -31,7 +31,23 @@ if ldd "${TRACEE_BIN}" 2>/dev/null | grep -q 'musl'; then
   export LD_LIBRARY_PATH="/lib:/lib/aarch64-linux-musl:${LD_LIBRARY_PATH:-}"
 fi
 
+listener_url="${LISTENER_URL:-}"
+# Identify container
+detect_container_id() {
+  local cid
+  cid=$(sed -nE 's#^.*/([0-9a-f]{12,64})(?:\\.scope)?$#\1#p' /proc/self/cgroup 2>/dev/null | tail -n1 || true)
+  if [[ -z "$cid" ]]; then
+    cid=$(sed -nE 's#^.*/containers/([0-9a-f]{12,64})/.*$#\1#p' /proc/self/mountinfo 2>/dev/null | head -n1 || true)
+  fi
+  echo "$cid"
+}
+container_name="${CONTAINER_NAME:-$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo unknown)}"
+container_id="${CONTAINER_ID:-$(detect_container_id)}"
+if [[ -z "$container_id" ]]; then container_id="$container_name"; fi
 echo "[ebpf] Starting Tracee-based watcher. events=${TRACE_EVENTS}" >&2
+if [[ -n "$listener_url" ]]; then
+  echo "[ebpf] Listener URL configured: $listener_url" >&2
+fi
 
 declare -A FD_PORT_BY_PIDFD   # key: "pid:fd" -> port
 declare -A LAST_PID_BY_PORT    # key: port -> last pid (best-effort)
@@ -79,7 +95,12 @@ process_bind_event() {
   FD_PORT_BY_PIDFD["$key"]="$port"
   LAST_PID_BY_PORT["$port"]="$pid"
 
-  echo "[$(date)] New port opened: ${port} (pid: ${pid}, fd: ${fd})"
+  line="[$(date)] New port opened: ${port} (pid: ${pid}, fd: ${fd})"
+  echo "$line"
+  if [[ -n "$listener_url" ]]; then
+    payload=$(printf '{"event":"open","port":%s,"pid":%s,"fd":%s,"container_id":"%s","container_name":"%s","source":"ebpf"}' "$port" "$pid" "${fd:-0}" "$container_id" "$container_name")
+    curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+  fi
 }
 
 process_listen_event() {
@@ -99,7 +120,12 @@ process_close_event() {
   key="${pid}:${fd}"
   port="${FD_PORT_BY_PIDFD[$key]:-}"
   if [[ -n "$port" ]]; then
-    echo "[$(date)] Port closed: ${port} (last pid: ${pid})"
+    line="[$(date)] Port closed: ${port} (last pid: ${pid})"
+    echo "$line"
+    if [[ -n "$listener_url" ]]; then
+      payload=$(printf '{"event":"close","port":%s,"last_pid":%s,"container_id":"%s","container_name":"%s","source":"ebpf"}' "$port" "$pid" "$container_id" "$container_name")
+      curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
+    fi
     unset 'FD_PORT_BY_PIDFD[$key]'
   fi
 }

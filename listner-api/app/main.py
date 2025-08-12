@@ -48,6 +48,7 @@ async def write_log_line(line: str) -> None:
         print(f"[listener] Failed to write log: {exc}", file=sys.stderr)
 
 
+# Primary ingestion endpoint. Accepts JSON or text; JSON is preferred.
 @app.post("/ingest")
 async def ingest(request: Request) -> Response:
     # Accept JSON or plain text lines
@@ -68,6 +69,7 @@ async def ingest(request: Request) -> Response:
     payload = text.decode("utf-8", errors="replace").strip()
     if not payload:
         return Response(status_code=status.HTTP_400_BAD_REQUEST, content="empty body")
+    # Best-effort parse of legacy text lines into JSON-ish fields
     await write_log_line(f"{ts} {payload}")
     return Response(status_code=status.HTTP_202_ACCEPTED)
 

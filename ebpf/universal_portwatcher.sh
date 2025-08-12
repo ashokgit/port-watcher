@@ -20,15 +20,36 @@ now_ms() {
   if [[ -n "$t" && "$t" =~ ^[0-9]+$ ]]; then echo "$t"; else echo $(( $(date +%s) * 1000 )); fi
 }
 
+collect_ports_from_proc() {
+  (
+    for f in /proc/net/tcp /proc/net/tcp6; do
+      [[ -r "$f" ]] || continue
+      awk 'NR>1 { split($2,a,":"); print a[2], $4 }' "$f" 2>/dev/null \
+        | while read -r hex state; do
+            [[ -z "$hex" ]] && continue
+            if [[ "$state" == "0A" ]]; then
+              echo $((16#$hex))
+            fi
+          done
+    done
+    for f in /proc/net/udp /proc/net/udp6; do
+      [[ -r "$f" ]] || continue
+      awk 'NR>1 { split($2,a,":"); print a[2] }' "$f" 2>/dev/null \
+        | while read -r hex; do
+            [[ -z "$hex" ]] && continue
+            echo $((16#$hex))
+          done
+    done
+  ) | grep -E '^[0-9]+$' | sort -u || true
+}
+
 collect_ports_once() {
   if command -v ss >/dev/null 2>&1; then
     ss -tulnH 2>/dev/null \
       | awk '{n=$5; sub(/^.*:/,"",n); if (n ~ /^[0-9]+$/) print n}' \
       | sort -u || true
   else
-    { cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk 'NR>1 { split($2,a,":"); if ($4=="0A") print strtonum("0x" a[2]) }'; \
-      cat /proc/net/udp /proc/net/udp6 2>/dev/null | awk 'NR>1 { split($2,a,":"); print strtonum("0x" a[2]) }'; } \
-      | grep -E '^[0-9]+$' | sort -u || true
+    collect_ports_from_proc
   fi
 }
 
@@ -42,7 +63,22 @@ resolve_pids_for_port() {
   echo "$pids"
 }
 
+listener_url="${LISTENER_URL:-}"
+detect_container_id() {
+  local cid
+  cid=$(sed -nE 's#^.*/([0-9a-f]{12,64})(?:\\.scope)?$#\1#p' /proc/self/cgroup 2>/dev/null | tail -n1 || true)
+  if [[ -z "$cid" ]]; then
+    cid=$(sed -nE 's#^.*/containers/([0-9a-f]{12,64})/.*$#\1#p' /proc/self/mountinfo 2>/dev/null | head -n1 || true)
+  fi
+  echo "$cid"
+}
+container_name="${CONTAINER_NAME:-$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo unknown)}"
+container_id="${CONTAINER_ID:-$(detect_container_id)}"
+if [[ -z "$container_id" ]]; then container_id="$container_name"; fi
 echo "[ebpf-fallback] Starting universal watcher. Interval: ${scan_interval}s, burst_scans: ${burst_scans}, burst_delay: ${burst_delay}s"
+if [[ -n "$listener_url" ]]; then
+  echo "[ebpf-fallback] Listener URL configured: $listener_url"
+fi
 
 while true; do
   ports_seen_in_burst=""
@@ -69,9 +105,15 @@ while true; do
         pids=$(resolve_pids_for_port "$p")
         port_to_pids["$p"]="$pids"
         if [[ -n "$pids" ]]; then
-          echo "[$(date)] New port opened: $p (pids: ${pids})"
+          line="[$(date)] New port opened: $p (pids: ${pids})"
         else
-          echo "[$(date)] New port opened: $p (pids: unknown)"
+          line="[$(date)] New port opened: $p (pids: unknown)"
+        fi
+        echo "$line"
+        if [[ -n "$listener_url" ]]; then
+          if [[ -n "$pids" ]]; then pjson="[$(echo "$pids" | tr ' ' ',')]"; else pjson="[]"; fi
+          payload=$(printf '{"event":"open","port":%s,"pids":%s,"container_id":"%s","container_name":"%s","source":"fallback"}' "$p" "$pjson" "$container_id" "$container_name")
+          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         if [[ "$verbose_lsof" == "1" ]]; then lsof -nP -i :"$p" 2>/dev/null || true; fi
       done <<< "$newly_seen"
@@ -92,9 +134,15 @@ while true; do
         fi
         last_pids="${port_to_pids[$p]:-}"
         if [[ -n "$last_pids" ]]; then
-          echo "[$(date)] Port closed: $p (last pids: ${last_pids})"
+          line="[$(date)] Port closed: $p (last pids: ${last_pids})"
         else
-          echo "[$(date)] Port closed: $p"
+          line="[$(date)] Port closed: $p"
+        fi
+        echo "$line"
+        if [[ -n "$listener_url" ]]; then
+          if [[ -n "$last_pids" ]]; then lpjson="[$(echo "$last_pids" | tr ' ' ',')]"; else lpjson="[]"; fi
+          payload=$(printf '{"event":"close","port":%s,"last_pids":%s,"container_id":"%s","container_name":"%s","source":"fallback"}' "$p" "$lpjson" "$container_id" "$container_name")
+          curl -sS -m 2 -H 'Content-Type: application/json' --data "$payload" "$listener_url" >/dev/null 2>&1 || true
         fi
         unset 'port_to_pids[$p]'
         unset 'port_last_seen_ms[$p]'
