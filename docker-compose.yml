@@ -12,6 +12,8 @@ services:
       - CLOSE_GRACE_MS=${CLOSE_GRACE_MS:-0}
       - SNAPSHOT_PATH=${SNAPSHOT_PATH:-/dev/shm/portwatcher.snapshot}
       - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
+      - WATCH_PORTS=${WATCH_PORTS:-}
+      - DESIRED_PORTS=${DESIRED_PORTS:-}
       # To watch only specific ports, set one of the following (examples):
       # - WATCH_PORTS=80 443,3000-3005
       # - DESIRED_PORTS=5000-5002 7001
@@ -32,6 +34,8 @@ services:
       - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
       - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
       - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
+      - WATCH_PORTS=${WATCH_PORTS:-}
+      - DESIRED_PORTS=${DESIRED_PORTS:-}
       # To watch only specific ports, set one of the following (examples):
       # - WATCH_PORTS=80 443,3000-3005
       # - DESIRED_PORTS=5000-5002 7001
@@ -64,6 +68,8 @@ services:
       - listner-api
     environment:
       - LISTENER_URL=http://listner-api:8080/ingest
+      - WATCH_PORTS=${WATCH_PORTS:-}
+      - DESIRED_PORTS=${DESIRED_PORTS:-}
       # Optional: restrict to a set of ports inside this container
       # - WATCH_PORTS=3000 5000-5002
       # - DESIRED_PORTS=7001
@@ -77,6 +83,8 @@ services:
       - listner-api
     environment:
       - LISTENER_URL=http://listner-api:8080/ingest
+      - WATCH_PORTS=${WATCH_PORTS:-}
+      - DESIRED_PORTS=${DESIRED_PORTS:-}
       # Optional: restrict to a set of ports inside this container
       # - WATCH_PORTS=3000 5000-5002
       # - DESIRED_PORTS=7002

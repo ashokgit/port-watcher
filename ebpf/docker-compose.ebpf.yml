@@ -12,6 +12,9 @@ services:
       - EBPF_FALLBACK=${EBPF_FALLBACK:-1}
       - EBPF_FORCE_FALLBACK=${EBPF_FORCE_FALLBACK:-0}
       - LISTENER_URL=${LISTENER_URL:-http://listner-api:8080/ingest}
+      # To watch only specific ports, set one of the following (examples):
+      # - WATCH_PORTS=80 443,3000-3005
+      # - DESIRED_PORTS=5000-5002 7001
     volumes:
       - /lib/modules:/lib/modules:ro
       - /usr/src:/usr/src:ro
