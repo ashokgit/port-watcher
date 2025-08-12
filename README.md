@@ -1,6 +1,13 @@
-# Docker Port Activity Monitor
+# Docker Port Activity Monitor (+ Listener API)
 
-Self-contained Docker environment that runs an idle container and continuously detects new TCP/UDP listening ports opened at runtime (e.g., via `docker exec`). Also detects when previously-open ports are closed and tracks the owning PID(s).
+Self-contained multi-container setup for observing port open/close activity and forwarding events as JSON to a central Listener API for logging/consumption.
+
+What's included:
+
+- `portwatcher` – sampling-based watcher that detects TCP/UDP port opens/closes inside its container (via `ss`/`lsof`). Sends JSON to the Listener if configured.
+- `listner-api` – FastAPI service that accepts events over HTTP (`POST /ingest`) and persists them to `/logs/portwatcher.log`.
+- `ebpf/` – optional event-driven watcher (Tracee-based) with a universal fallback; also forwards JSON to the Listener.
+- `nodejs-tester` and `python-tester` – minimal containers that run the watcher by default. You can exec into them to open/close ports manually to generate events.
 
 ## Quick start
 
@@ -84,16 +91,20 @@ make stop
 make clean
 ```
 
-## How it works
+## Services and how they work
 
-- Image is based on `node:18` and includes `ss`, `lsof`, and related tools.
-- Entrypoint script `listen_ports.sh` runs inside the container and:
+- `portwatcher` image is based on `node:18` and includes `ss`, `lsof`, and related tools. Entrypoint script `listen_ports.sh` runs inside the container and:
   - Uses the `ss` backend by default to enumerate TCP/UDP sockets, with an optional `/proc` backend.
   - Supports burst scanning: multiple quick scans per cycle to catch short-lived ports between base intervals.
   - Resolves PID(s) primarily via `ss -p` and falls back to `lsof` if needed.
   - Optionally debounces close events via a grace period to reduce flapping.
   - Persists the most recent port snapshot to `/dev/shm/portwatcher.snapshot` (configurable) for continuity.
-- No Docker API access is required; everything runs in-container, watching only the container itself.
+- When `LISTENER_URL` is set (defaults to `http://listner-api:8080/ingest` in `docker-compose.yml`), it POSTS JSON events to the Listener API.
+- No Docker API access is required; each watcher only observes its own container's namespace.
+
+- `listner-api` is a FastAPI app that exposes:
+  - `GET /healthz` – health check
+  - `POST /ingest` – accepts JSON or text (JSON preferred) and appends a log line to `/logs/portwatcher.log`
 
 You can run the watcher directly (default `CMD`) or under Supervisor (PID 1 process supervising the watcher and restarting it on failure).
 
@@ -134,6 +145,71 @@ make run CLOSE_GRACE_MS=200
 
 ```bash
 make run SNAPSHOT_PATH=/dev/shm/portwatcher.snapshot
+
+- Listener URL and container identity (auto-detected, can override):
+
+```bash
+# Where watchers POST events (defaults to the service name URL)
+LISTENER_URL=http://listner-api:8080/ingest
+# Optionally override container identity presented in JSON
+CONTAINER_ID=<id> CONTAINER_NAME=<name>
+```
+
+## Listener API
+
+- Endpoint: `POST /ingest`
+- Content-Type: `application/json`
+- Example payloads:
+
+```json
+{"event":"open","port":5000,"pids":[123],"container_id":"<cid>","container_name":"<name>","source":"polling"}
+{"event":"close","port":5000,"last_pids":[123],"container_id":"<cid>","container_name":"<name>","source":"polling"}
+```
+
+The Listener prefixes each entry with a server-side `ts` field and writes a compact JSON line to `/logs/portwatcher.log` (mounted volume).
+
+Common ops:
+
+```bash
+# Clear listener log
+docker exec listner-api sh -lc '> /logs/portwatcher.log'
+# Tail log
+docker exec -it listner-api sh -lc 'tail -f /logs/portwatcher.log'
+```
+
+## Test with the provided testers
+
+Bring up the testers (already included in `docker compose up`): `nodejs-tester` and `python-tester` run the watcher by default and forward events to the Listener.
+
+- Node.js tester (open/close port 7001):
+
+```bash
+docker exec -it nodejs-tester bash
+node -e "require('http').createServer(()=>{}).listen(7001)"   # open
+# in another terminal
+docker exec nodejs-tester bash -lc 'pid=$(lsof -t -i :7001 || true); [ -n "$pid" ] && kill $pid || true'  # close
+```
+
+- Python tester (open/close port 7002):
+
+```bash
+docker exec -it python-tester bash
+python - <<'PY'
+import http.server, socketserver
+PORT=7002
+httpd=socketserver.TCPServer(('', PORT), http.server.SimpleHTTPRequestHandler)
+httpd.serve_forever()
+PY
+# in another terminal
+docker exec python-tester bash -lc 'pid=$(lsof -t -i :7002 || true); [ -n "$pid" ] && kill $pid || true'
+```
+
+Sample JSON lines you should see in the Listener log:
+
+```json
+{"ts":"...Z","event":"open","port":7001,"pids":[8],"container_id":"<cid>","container_name":"nodejs-tester","source":"fallback"}
+{"ts":"...Z","event":"close","port":7001,"last_pids":[8],"container_id":"<cid>","container_name":"nodejs-tester","source":"fallback"}
+```
 ```
 
 ## Run as a background service with Supervisor
@@ -256,7 +332,7 @@ make ebpf-stop
 Notes:
 - The eBPF service runs under Supervisor inside `ebpf/` image and logs to stdout.
 - The container is started with `privileged: true` and mounts `/lib/modules`, `/usr/src`, `/sys/kernel/debug`, `/sys/fs/bpf` for Tracee.
-- Events shown are similar to `listen_ports.sh` output, e.g., `New port opened: 5000 (pid: 123, fd: 7)` and `Port closed: 5000 (last pid: 123)`.
+- When `LISTENER_URL` is set, eBPF watcher also POSTs JSON events with the same schema (source set to `"ebpf"` or `"fallback"`).
 
 ## Limitations
 
@@ -266,9 +342,13 @@ Notes:
 ## Repository layout
 
 ```
-Dockerfile
+Dockerfile                     # portwatcher image (sampling watcher)
+docker-compose.yml             # full stack: watcher, listener API, testers
+listen_ports.sh                # sampling watcher script (JSON forwarding)
+listner-api/                   # FastAPI service (POST /ingest -> /logs/portwatcher.log)
+ebpf/                          # Tracee-based watcher + universal fallback
+nodejs-tester/                 # Node-based test container (watcher pre-wired)
+python-tester/                 # Python-based test container (watcher pre-wired)
 Makefile
-docker-compose.yml
-listen_ports.sh
 README.md
 ```
